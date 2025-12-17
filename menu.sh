@@ -158,7 +158,7 @@ show_menu() {
     clear
     echo -e "${SKYBLUE}#############################################${NC}"
     echo -e "${SKYBLUE}#          SS-ARGO 代理管理脚本             #${NC}"
-    echo -e "${SKYBLUE}#          快捷命令: $SHORTCUT_NAME                      #${NC}"
+    echo -e "${SKYBLUE}#          快捷命令: $SHORTCUT_NAME                     #${NC}"
     echo -e "${SKYBLUE}#############################################${NC}"
     
     # 检查运行状态
