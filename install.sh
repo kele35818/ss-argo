@@ -3,7 +3,7 @@
 # 全局配置
 REPO_URL="https://github.com/kele35818/ss-argo.git"
 APP_DIR="/root/ss-argo"
-SCRIPT_PATH="$APP_DIR/menu.sh"
+SCRIPT_PATH="$APP_DIR/install.sh"
 SHORTCUT_NAME="ss" 
 
 # 颜色定义
