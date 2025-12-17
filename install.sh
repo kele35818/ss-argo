@@ -30,7 +30,6 @@ get_current_env() {
         CUR_UUID=$(pm2 describe node-proxy | grep "UUID" | awk '{print $4}' | tr -d "'" | tr -d '"')
         CUR_TOKEN=$(pm2 describe node-proxy | grep "ARGO_AUTH" | awk '{print $4}' | tr -d "'" | tr -d '"')
         CUR_DOMAIN=$(pm2 describe node-proxy | grep "ARGO_DOMAIN" | awk '{print $4}' | tr -d "'" | tr -d '"')
-        # 获取当前端口
         CUR_PORT=$(pm2 describe node-proxy | grep "ARGO_PORT" | awk '{print $4}' | tr -d "'" | tr -d '"')
     else
         CUR_UUID=""
@@ -40,55 +39,104 @@ get_current_env() {
     fi
 }
 
-# --- 核心：一直等待直到获取到链接 ---
 wait_for_link() {
     echo -e "${YELLOW}正在等待生成节点链接... (请不要关闭)${NC}"
     echo -e "如果时间过长，请检查 Token 是否正确"
     
     SECONDS=0
-    TIMEOUT=60 # 设置一个建议超时，防止彻底卡死，但这里主要靠循环
-    
     while true; do
-        # 检查进程是否还活着
         if ! pm2 list | grep -q "node-proxy"; then
             echo -e "${RED}错误：服务已停止运行，请检查日志。${NC}"
             break
         fi
 
-        # 搜索日志关键字
         if pm2 logs node-proxy --lines 100 --nostream | grep -q "SS 链接"; then
             echo -e "${GREEN}================ 节点信息 =================${NC}"
-            # 打印包含链接的那几行
             pm2 logs node-proxy --lines 100 --nostream | grep -A 10 "\[SS 链接\]"
             echo -e "${GREEN}===========================================${NC}"
             break
         fi
-
-        # 打印进度动画
         echo -n "."
         sleep 2
     done
 }
 
+# --- 核心修改：多系统自动识别安装环境 ---
+check_and_install_env() {
+    # 如果环境都齐了，直接跳过
+    if command -v node &>/dev/null && command -v npm &>/dev/null && command -v git &>/dev/null && command -v pm2 &>/dev/null; then
+        echo -e "${GREEN}环境依赖已安装 (Node.js, Git, PM2)，跳过安装步骤。${NC}"
+        return
+    fi
+
+    echo -e "${YELLOW}正在识别系统并安装依赖...${NC}"
+
+    # 1. Alpine Linux
+    if [ -f /etc/alpine-release ]; then
+        echo -e "${SKYBLUE}识别为 Alpine Linux${NC}"
+        apk update
+        # Alpine 需要单独安装 npm 和 bash
+        apk add nodejs npm git bash curl
+
+    # 2. Arch Linux
+    elif [ -f /etc/arch-release ]; then
+        echo -e "${SKYBLUE}识别为 Arch Linux${NC}"
+        pacman -Syu --noconfirm
+        pacman -S --noconfirm nodejs npm git curl
+
+    # 3. Debian / Ubuntu / Kali
+    elif [ -f /etc/debian_version ]; then
+        echo -e "${SKYBLUE}识别为 Debian/Ubuntu${NC}"
+        apt-get update
+        apt-get install -y curl git
+        # 使用官方脚本安装 Node 18
+        curl -fsSL https://deb.nodesource.com/setup_18.x | bash -
+        apt-get install -y nodejs
+
+    # 4. CentOS / RHEL / Fedora / Aliyun
+    elif [ -f /etc/redhat-release ]; then
+        echo -e "${SKYBLUE}识别为 CentOS/RHEL${NC}"
+        yum install -y curl git
+        # 使用官方脚本安装 Node 18
+        curl -fsSL https://rpm.nodesource.com/setup_18.x | bash -
+        yum install -y nodejs
+        
+    else
+        echo -e "${RED}未识别的操作系统，脚本无法自动安装 Node.js。${NC}"
+        echo -e "${YELLOW}请手动安装 Node.js 18+ 和 Git 后重试。${NC}"
+        exit 1
+    fi
+
+    # 安装 PM2 (所有系统通用)
+    if ! command -v pm2 &> /dev/null; then
+        echo -e "${YELLOW}正在安装 PM2...${NC}"
+        npm install -g pm2
+    fi
+}
+
 install_app() {
     echo -e "${YELLOW}=== 开始安装 ===${NC}"
-    if ! command -v node &> /dev/null; then
-        curl -fsSL https://deb.nodesource.com/setup_18.x | bash - >/dev/null 2>&1
-        apt-get install -y nodejs git >/dev/null 2>&1
+    
+    # 调用新的多系统环境安装函数
+    check_and_install_env
+
+    # 二次验证
+    if ! command -v npm &> /dev/null; then
+        echo -e "${RED}错误：环境安装失败，未找到 npm 命令。${NC}"
+        exit 1
     fi
-    if ! command -v pm2 &> /dev/null; then npm install -g pm2 >/dev/null 2>&1; fi
 
     rm -rf "$APP_DIR"
+    echo -e "${YELLOW}正在拉取代码...${NC}"
     git clone "$REPO_URL" "$APP_DIR"
     cd "$APP_DIR" || exit
+    
+    echo -e "${YELLOW}正在安装依赖...${NC}"
     npm install
 
-    # === [修改点] 交互式输入 ===
     read -p "请输入 UUID (回车随机): " IN_UUID
     read -p "请输入 Argo Token (必填): " IN_TOKEN
     read -p "请输入 Argo 域名 (必填): " IN_DOMAIN
-    
-    # 新增端口输入
     read -p "请输入 Argo 端口 (默认 8001): " IN_PORT
     if [ -z "$IN_PORT" ]; then IN_PORT="8001"; fi
 
@@ -97,7 +145,6 @@ install_app() {
         return
     fi
 
-    # 启动命令加入 ARGO_PORT
     ENV_STR="ARGO_AUTH='$IN_TOKEN' ARGO_DOMAIN='$IN_DOMAIN' ARGO_PORT='$IN_PORT'"
     if [ ! -z "$IN_UUID" ]; then ENV_STR="$ENV_STR UUID='$IN_UUID'"; fi
     
@@ -108,8 +155,6 @@ install_app() {
     
     create_shortcut
     echo -e "${GREEN}服务启动成功！${NC}"
-    
-    # 调用死循环等待函数
     wait_for_link
 }
 
@@ -137,7 +182,6 @@ update_config() {
     if [ -z "$NEW_VAL" ]; then echo "不能为空"; return; fi
 
     pm2 delete node-proxy >/dev/null 2>&1
-    # 重启时带上所有变量
     eval "ARGO_AUTH='$CUR_TOKEN' ARGO_DOMAIN='$CUR_DOMAIN' UUID='$CUR_UUID' ARGO_PORT='$CUR_PORT' pm2 start main.js --name node-proxy"
     pm2 save >/dev/null 2>&1
     
@@ -150,10 +194,10 @@ show_menu() {
     clear
     echo -e "${SKYBLUE}=== SS-ARGO 管理 ($SHORTCUT_NAME) ===${NC}"
     if pm2 list | grep -q "node-proxy"; then echo -e "状态: ${GREEN}运行中${NC}"; else echo -e "状态: ${RED}未运行${NC}"; fi
-    echo "1. 安装/重装 "
+    echo "1. 安装/重装 (自定义端口)"
     echo "2. 卸载"
     echo "3. 修改配置 (Token / 域名 / 端口)"
-    echo "4. 查看节点链接 "
+    echo "4. 查看节点链接 (强制刷新)"
     echo "0. 退出"
     read -p "选择: " choice
 
