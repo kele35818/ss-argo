@@ -2,8 +2,8 @@
 
 # 全局配置
 # 请确保这里替换为你自己的 GitHub 仓库地址
-REPO_URL="https://github.com/guoziyou/my-proxy.git"
-APP_DIR="/root/node-proxy"
+REPO_URL="https://github.com/kele35818/ss-argo.git"
+APP_DIR="/root/ss-argo"
 SCRIPT_PATH="$APP_DIR/menu.sh"
 
 # --- 修改点：将快捷指令名称改为 ss ---
