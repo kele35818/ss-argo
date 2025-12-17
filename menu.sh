@@ -89,7 +89,7 @@ install_app() {
     read -p "请输入 Argo 域名 (必填): " IN_DOMAIN
     
     # 新增端口输入
-    read -p "请输入 内部端口 (默认 8001, 冲突请改 8002): " IN_PORT
+    read -p "请输入 内部端口 (默认 8001): " IN_PORT
     if [ -z "$IN_PORT" ]; then IN_PORT="8001"; fi
 
     if [ -z "$IN_TOKEN" ] || [ -z "$IN_DOMAIN" ]; then
