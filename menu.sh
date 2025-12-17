@@ -1,12 +1,9 @@
 #!/bin/bash
 
 # 全局配置
-# 请确保这里替换为你自己的 GitHub 仓库地址
 REPO_URL="https://github.com/kele35818/ss-argo.git"
-APP_DIR="/root/node-proxy"
+APP_DIR="/root/ss-argo"
 SCRIPT_PATH="$APP_DIR/menu.sh"
-
-# --- 修改点：将快捷指令名称改为 ss ---
 SHORTCUT_NAME="ss" 
 
 # 颜色定义
@@ -16,66 +13,92 @@ YELLOW='\033[1;33m'
 SKYBLUE='\033[0;36m'
 NC='\033[0m'
 
-# 检查 Root 权限
 check_root() {
-    if [ "$EUID" -ne 0 ]; then
-        echo -e "${RED}请使用 root 用户运行此脚本${NC}"
-        exit 1
-    fi
+    if [ "$EUID" -ne 0 ]; then echo -e "${RED}请使用 root 用户运行${NC}"; exit 1; fi
 }
 
-# 创建快捷指令
 create_shortcut() {
     if [ -f "$SCRIPT_PATH" ]; then
         chmod +x "$SCRIPT_PATH"
         ln -sf "$SCRIPT_PATH" "/usr/bin/$SHORTCUT_NAME"
-        echo -e "${GREEN}快捷指令 '$SHORTCUT_NAME' 已创建，以后只需输入 $SHORTCUT_NAME 即可打开此菜单。${NC}"
+        echo -e "${GREEN}快捷指令 '$SHORTCUT_NAME' 已创建${NC}"
     fi
 }
 
-# 获取当前 PM2 环境变量 (用于修改配置时保留旧值)
 get_current_env() {
     if pm2 describe node-proxy >/dev/null 2>&1; then
         CUR_UUID=$(pm2 describe node-proxy | grep "UUID" | awk '{print $4}' | tr -d "'" | tr -d '"')
         CUR_TOKEN=$(pm2 describe node-proxy | grep "ARGO_AUTH" | awk '{print $4}' | tr -d "'" | tr -d '"')
         CUR_DOMAIN=$(pm2 describe node-proxy | grep "ARGO_DOMAIN" | awk '{print $4}' | tr -d "'" | tr -d '"')
+        # 获取当前端口
+        CUR_PORT=$(pm2 describe node-proxy | grep "ARGO_PORT" | awk '{print $4}' | tr -d "'" | tr -d '"')
     else
         CUR_UUID=""
         CUR_TOKEN=""
         CUR_DOMAIN=""
+        CUR_PORT="8001"
     fi
 }
 
-# 1. 安装服务
+# --- 核心：一直等待直到获取到链接 ---
+wait_for_link() {
+    echo -e "${YELLOW}正在等待生成节点链接... (请不要关闭)${NC}"
+    echo -e "如果时间过长，请检查 Token 是否正确"
+    
+    SECONDS=0
+    TIMEOUT=60 # 设置一个建议超时，防止彻底卡死，但这里主要靠循环
+    
+    while true; do
+        # 检查进程是否还活着
+        if ! pm2 list | grep -q "node-proxy"; then
+            echo -e "${RED}错误：服务已停止运行，请检查日志。${NC}"
+            break
+        fi
+
+        # 搜索日志关键字
+        if pm2 logs node-proxy --lines 100 --nostream | grep -q "SS 链接"; then
+            echo -e "${GREEN}================ 节点信息 =================${NC}"
+            # 打印包含链接的那几行
+            pm2 logs node-proxy --lines 100 --nostream | grep -A 10 "\[SS 链接\]"
+            echo -e "${GREEN}===========================================${NC}"
+            break
+        fi
+
+        # 打印进度动画
+        echo -n "."
+        sleep 2
+    done
+}
+
 install_app() {
     echo -e "${YELLOW}=== 开始安装 ===${NC}"
-    
-    # 环境检查
     if ! command -v node &> /dev/null; then
-        echo "安装 Node.js..."
         curl -fsSL https://deb.nodesource.com/setup_18.x | bash - >/dev/null 2>&1
-        apt-get install -y nodejs git >/dev/null 2>&1 || yum install -y nodejs git >/dev/null 2>&1
+        apt-get install -y nodejs git >/dev/null 2>&1
     fi
     if ! command -v pm2 &> /dev/null; then npm install -g pm2 >/dev/null 2>&1; fi
 
-    # 拉取代码
     rm -rf "$APP_DIR"
     git clone "$REPO_URL" "$APP_DIR"
     cd "$APP_DIR" || exit
     npm install
 
-    # 获取输入
+    # === [修改点] 交互式输入 ===
     read -p "请输入 UUID (回车随机): " IN_UUID
     read -p "请输入 Argo Token (必填): " IN_TOKEN
     read -p "请输入 Argo 域名 (必填): " IN_DOMAIN
+    
+    # 新增端口输入
+    read -p "请输入 内部端口 (默认 8001, 冲突请改 8002): " IN_PORT
+    if [ -z "$IN_PORT" ]; then IN_PORT="8001"; fi
 
     if [ -z "$IN_TOKEN" ] || [ -z "$IN_DOMAIN" ]; then
         echo -e "${RED}Token 和 域名不能为空！${NC}"
         return
     fi
 
-    # 启动
-    ENV_STR="ARGO_AUTH='$IN_TOKEN' ARGO_DOMAIN='$IN_DOMAIN'"
+    # 启动命令加入 ARGO_PORT
+    ENV_STR="ARGO_AUTH='$IN_TOKEN' ARGO_DOMAIN='$IN_DOMAIN' ARGO_PORT='$IN_PORT'"
     if [ ! -z "$IN_UUID" ]; then ENV_STR="$ENV_STR UUID='$IN_UUID'"; fi
     
     pm2 delete node-proxy >/dev/null 2>&1
@@ -84,129 +107,74 @@ install_app() {
     pm2 startup | bash >/dev/null 2>&1
     
     create_shortcut
-    echo -e "${GREEN}安装完成！${NC}"
-    show_info
-}
-
-# 2. 卸载服务
-uninstall_app() {
-    read -p "确定要卸载吗？(y/n): " confirm
-    if [ "$confirm" == "y" ]; then
-        pm2 delete node-proxy >/dev/null 2>&1
-        pm2 save >/dev/null 2>&1
-        rm -rf "$APP_DIR"
-        rm -f "/usr/bin/$SHORTCUT_NAME"
-        echo -e "${GREEN}已彻底卸载。${NC}"
-    else
-        echo "取消操作。"
-    fi
-}
-
-# 3. 修改配置 (通用函数)
-update_config() {
-    get_current_env # 获取当前值
-    if [ -z "$CUR_TOKEN" ]; then
-        echo -e "${RED}服务未运行，无法修改。请先安装。${NC}"
-        return
-    fi
-
-    echo -e "当前配置:"
-    echo -e "UUID: ${SKYBLUE}$CUR_UUID${NC}"
-    echo -e "域名: ${SKYBLUE}$CUR_DOMAIN${NC}"
+    echo -e "${GREEN}服务启动成功！${NC}"
     
+    # 调用死循环等待函数
+    wait_for_link
+}
+
+uninstall_app() {
+    read -p "确定卸载? (y/n): " c
+    if [ "$c" == "y" ]; then
+        pm2 delete node-proxy >/dev/null 2>&1
+        rm -rf "$APP_DIR" "/usr/bin/$SHORTCUT_NAME"
+        echo -e "${GREEN}已卸载${NC}"
+    fi
+}
+
+update_config() {
+    get_current_env
+    if [ -z "$CUR_TOKEN" ]; then echo -e "${RED}未运行${NC}"; return; fi
+    
+    echo -e "当前配置: UUID=${CUR_UUID} | 端口=${CUR_PORT} | 域名=${CUR_DOMAIN}"
     local TYPE=$1
-    local NEW_TOKEN="$CUR_TOKEN"
-    local NEW_DOMAIN="$CUR_DOMAIN"
+    local NEW_VAL=""
 
-    if [ "$TYPE" == "token" ]; then
-        read -p "请输入新的 Argo Token: " NEW_TOKEN
-    elif [ "$TYPE" == "domain" ]; then
-        read -p "请输入新的 Argo 域名: " NEW_DOMAIN
-    fi
+    if [ "$TYPE" == "token" ]; then read -p "新 Token: " NEW_VAL; CUR_TOKEN=$NEW_VAL; fi
+    if [ "$TYPE" == "domain" ]; then read -p "新 域名: " NEW_VAL; CUR_DOMAIN=$NEW_VAL; fi
+    if [ "$TYPE" == "port" ]; then read -p "新 端口: " NEW_VAL; CUR_PORT=$NEW_VAL; fi
 
-    if [ -z "$NEW_TOKEN" ] || [ -z "$NEW_DOMAIN" ]; then
-        echo -e "${RED}输入不能为空！${NC}"
-        return
-    fi
+    if [ -z "$NEW_VAL" ]; then echo "不能为空"; return; fi
 
-    echo -e "${YELLOW}正在更新配置...${NC}"
     pm2 delete node-proxy >/dev/null 2>&1
-    eval "ARGO_AUTH='$NEW_TOKEN' ARGO_DOMAIN='$NEW_DOMAIN' UUID='$CUR_UUID' pm2 start main.js --name node-proxy"
+    # 重启时带上所有变量
+    eval "ARGO_AUTH='$CUR_TOKEN' ARGO_DOMAIN='$CUR_DOMAIN' UUID='$CUR_UUID' ARGO_PORT='$CUR_PORT' pm2 start main.js --name node-proxy"
     pm2 save >/dev/null 2>&1
     
-    echo -e "${GREEN}修改成功！正在重启服务...${NC}"
-    sleep 3
-    show_info
+    echo -e "${GREEN}修改成功，正在等待重启...${NC}"
+    sleep 2
+    wait_for_link
 }
 
-# 4. 查看节点信息
-show_info() {
-    echo -e "${YELLOW}正在获取节点信息...${NC}"
-    # 尝试从日志中抓取
-    if pm2 logs node-proxy --lines 50 --nostream | grep -q "SS 链接"; then
-        echo -e "${GREEN}================ 节点信息 =================${NC}"
-        pm2 logs node-proxy --lines 50 --nostream | grep -A 5 "\[SS 链接\]"
-        echo -e "${GREEN}===========================================${NC}"
-    else
-        echo -e "${RED}日志中未找到链接，请等待几秒后重试，或检查服务是否正常运行。${NC}"
-        echo -e "尝试命令: pm2 logs node-proxy"
-    fi
-}
-
-# === 主菜单 ===
 show_menu() {
     clear
-    echo -e "${SKYBLUE}#############################################${NC}"
-    echo -e "${SKYBLUE}#          SS-ARGO 代理管理脚本             #${NC}"
-    echo -e "${SKYBLUE}#          快捷命令: $SHORTCUT_NAME                     #${NC}"
-    echo -e "${SKYBLUE}#############################################${NC}"
-    
-    # 检查运行状态
-    if pm2 list | grep -q "node-proxy"; then
-        STATUS="${GREEN}运行中${NC}"
-    else
-        STATUS="${RED}未运行${NC}"
-    fi
-    echo -e "当前状态: $STATUS"
-    echo ""
-    echo -e "1. 安装/重装 ss-argo"
-    echo -e "2. 卸载 ss-argo"
-    echo -e "3. 修改 Argo 隧道配置"
-    echo -e "4. 查看节点链接"
-    echo -e "0. 退出"
-    echo ""
-    read -p "请选择 [0-4]: " choice
+    echo -e "${SKYBLUE}=== Node.js Proxy 管理 ($SHORTCUT_NAME) ===${NC}"
+    if pm2 list | grep -q "node-proxy"; then echo -e "状态: ${GREEN}运行中${NC}"; else echo -e "状态: ${RED}未运行${NC}"; fi
+    echo "1. 安装/重装 (自定义端口)"
+    echo "2. 卸载"
+    echo "3. 修改配置 (Token / 域名 / 端口)"
+    echo "4. 查看节点链接 (强制刷新)"
+    echo "0. 退出"
+    read -p "选择: " choice
 
     case $choice in
         1) install_app ;;
         2) uninstall_app ;;
         3) 
-            echo ""
-            echo -e "   1. 修改 Argo Token"
-            echo -e "   2. 修改 Argo 域名"
-            read -p "   请选择 [1-2]: " sub_choice
-            case $sub_choice in
-                1) update_config "token" ;;
-                2) update_config "domain" ;;
-                *) echo "无效选择" ;;
-            esac
+            echo "1.Token 2.域名 3.端口"
+            read -p "修改哪项: " sub
+            if [ "$sub" == "1" ]; then update_config "token"; fi
+            if [ "$sub" == "2" ]; then update_config "domain"; fi
+            if [ "$sub" == "3" ]; then update_config "port"; fi
             ;;
-        4) show_info ;;
+        4) wait_for_link ;;
         0) exit 0 ;;
-        *) echo "无效选择" ;;
+        *) echo "无效" ;;
     esac
     
-    if [ "$choice" != "0" ]; then
-        echo ""
-        read -p "按回车键返回主菜单..."
-        show_menu
-    fi
+    if [ "$choice" != "0" ]; then read -p "按回车返回..."; show_menu; fi
 }
 
 check_root
-# 如果是第一次运行（非快捷方式），尝试建立快捷方式
-if [ "$0" != "/usr/bin/$SHORTCUT_NAME" ]; then
-    create_shortcut >/dev/null 2>&1
-fi
-
+if [ "$0" != "/usr/bin/$SHORTCUT_NAME" ]; then create_shortcut >/dev/null 2>&1; fi
 show_menu
