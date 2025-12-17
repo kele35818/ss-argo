@@ -150,10 +150,10 @@ show_menu() {
     clear
     echo -e "${SKYBLUE}=== Node.js Proxy 管理 ($SHORTCUT_NAME) ===${NC}"
     if pm2 list | grep -q "node-proxy"; then echo -e "状态: ${GREEN}运行中${NC}"; else echo -e "状态: ${RED}未运行${NC}"; fi
-    echo "1. 安装/重装 (自定义端口)"
+    echo "1. 安装/重装 "
     echo "2. 卸载"
     echo "3. 修改配置 (Token / 域名 / 端口)"
-    echo "4. 查看节点链接 (强制刷新)"
+    echo "4. 查看节点链接 "
     echo "0. 退出"
     read -p "选择: " choice
 
