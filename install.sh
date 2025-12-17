@@ -148,7 +148,7 @@ update_config() {
 
 show_menu() {
     clear
-    echo -e "${SKYBLUE}=== Node.js Proxy 管理 ($SHORTCUT_NAME) ===${NC}"
+    echo -e "${SKYBLUE}=== SS-ARGO 管理 ($SHORTCUT_NAME) ===${NC}"
     if pm2 list | grep -q "node-proxy"; then echo -e "状态: ${GREEN}运行中${NC}"; else echo -e "状态: ${RED}未运行${NC}"; fi
     echo "1. 安装/重装 "
     echo "2. 卸载"
