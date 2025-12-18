@@ -295,7 +295,7 @@ EOF
 
 # === 菜单 ===
 clear
-echo -e "${SKYBLUE}=== SS-Argo 管理 (Alpine/Systemd 兼容版) ===${NC}"
+echo -e "${SKYBLUE}=== SS-Argo 管理 ===${NC}"
 echo -n "状态: "; check_service_status
 echo "1. 安装 / 重装"
 echo "2. 卸载"
